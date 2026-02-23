@@ -206,19 +206,29 @@ def send_to_discord(content):
 # =========================================
 def main():
 
+     # 1️⃣ 뉴스 수집
     kr_news = fetch_news(country="kr", limit=10)
     global_news = fetch_news(language="en", limit=10)
 
-    articles = preprocess_articles(kr_news + global_news)
-
-    if len(articles) < 3:
-        send_to_discord("뉴스 수집 실패 또는 기사 부족")
+    # 🔍 1차 검증: API 응답 자체 확인
+    if len(kr_news) == 0 and len(global_news) == 0:
+        send_to_discord("NewsAPI 응답 없음 - API 또는 쿼리 확인 필요")
         return
 
+    # 2️⃣ 전처리
+    articles = preprocess_articles(kr_news + global_news)
+
+    # 🔍 2차 검증: 전처리 이후 기사 수 확인
+    if len(articles) < 3:
+        send_to_discord(f"전처리 후 기사 부족: {len(articles)}개")
+        return
+
+    # 3️⃣ 중요 기사 선택
     selected_indices = select_top_articles(articles)
 
-    message = "📌 오늘의 IT/AI 핵심 뉴스 TOP 3 (고급 분석)\n\n"
+    message = "📌 오늘의 IT/AI 핵심 뉴스 TOP 3\n\n"
 
+    # 4️⃣ 분석
     for idx in selected_indices:
         article = articles[idx]
         result = summarize_and_predict(article)
@@ -227,6 +237,7 @@ def main():
         message += result
         message += "\n\n"
 
+    # 5️⃣ 디스코드 전송
     send_to_discord(message)
 
 
