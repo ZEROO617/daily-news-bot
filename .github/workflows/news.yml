@@ -1,8 +1,8 @@
-name: Daily News Bot
+name: Daily AI Market Analysis Bot
 
 on:
   schedule:
-    - cron: '0 22 * * *'   # 한국 오전 7시 (UTC 22시)
+    - cron: '0 22 * * *'
   workflow_dispatch:
 
 jobs:
@@ -24,6 +24,6 @@ jobs:
       - name: Run bot
         env:
           NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: python main.py
