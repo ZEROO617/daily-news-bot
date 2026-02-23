@@ -20,24 +20,37 @@ KEYWORDS = "IT OR AI OR startup OR programming OR computer"
 # =========================================
 # 뉴스 수집
 # =========================================
-def fetch_news(country=None, language=None, limit=10):
+def fetch_news(query=None, country=None, language=None, limit=10):
     url = "https://newsapi.org/v2/top-headlines"
 
     params = {
-        "q": KEYWORDS,
         "pageSize": limit,
-        "sortBy": "popularity",
         "apiKey": NEWS_API_KEY,
     }
 
+    if query:
+        params["q"] = query
     if country:
         params["country"] = country
     if language:
         params["language"] = language
 
     response = requests.get(url, params=params)
+
+    # 🔥 상태 코드 체크
+    if response.status_code != 200:
+        print("HTTP ERROR:", response.status_code)
+        print(response.text)
+        return []
+
     data = response.json()
 
+    # 🔥 API 내부 에러 체크
+    if data.get("status") != "ok":
+        print("NEWS API ERROR:", data)
+        return []
+
+    print("Fetched:", len(data.get("articles", [])))
     return data.get("articles", [])
 
 
