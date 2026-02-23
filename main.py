@@ -1,87 +1,217 @@
 import os
 import requests
-from datetime import datetime
+import json
 from openai import OpenAI
 
-# ==============================
-# Config
-# ==============================
+# =========================================
+# 환경 변수
+# =========================================
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
-DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-TOPIC = "AI"
+DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
+
+MODEL_NAME = "gpt-4o-mini"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+KEYWORDS = "IT OR AI OR startup OR programming OR computer"
 
-# ==============================
-# News Service
-# ==============================
-class NewsService:
-    BASE_URL = "https://newsapi.org/v2/everything"
 
-    def __init__(self, api_key: str):
-        self.api_key = api_key
+# =========================================
+# 뉴스 수집
+# =========================================
+def fetch_news(country=None, language=None, limit=10):
+    url = "https://newsapi.org/v2/top-headlines"
 
-    def fetch(self, topic: str, limit: int = 3):
-        params = {
-            "q": topic,
-            "sortBy": "publishedAt",
-            "language": "ko",
-            "apiKey": self.api_key,
-            "pageSize": limit,
+    params = {
+        "q": KEYWORDS,
+        "pageSize": limit,
+        "sortBy": "popularity",
+        "apiKey": NEWS_API_KEY,
+    }
+
+    if country:
+        params["country"] = country
+    if language:
+        params["language"] = language
+
+    response = requests.get(url, params=params)
+    data = response.json()
+
+    return data.get("articles", [])
+
+
+# =========================================
+# 전처리 (토큰 최소화 + 품질 유지)
+# =========================================
+def preprocess_articles(articles):
+    unique = {}
+
+    for a in articles:
+        title = (a.get("title") or "").strip()
+        description = (a.get("description") or "").strip()
+        content = (a.get("content") or "").strip()
+
+        if not title:
+            continue
+
+        summary_text = description if len(description) > 30 else content
+
+        if len(summary_text) < 30:
+            continue
+
+        if title in unique:
+            continue
+
+        unique[title] = {
+            "title": title,
+            "summary_text": summary_text,
+            "url": a.get("url", "")
         }
-        response = requests.get(self.BASE_URL, params=params)
-        response.raise_for_status()
-        return response.json()["articles"]
+
+    return list(unique.values())
 
 
-# ==============================
-# AI Summarizer
-# ==============================
-def summarize(text: str) -> str:
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "뉴스를 3줄로 간결하게 요약해라."},
-            {"role": "user", "content": text}
-        ],
-        max_tokens=150
+# =========================================
+# 1차: 중요 기사 선택 (구조적 기준 적용)
+# =========================================
+def select_top_articles(articles, top_n=3):
+
+    prompt = """
+다음 뉴스 중 IT/AI/산업/개발자 관점에서 가장 의미 있는 기사 3개의 번호만 JSON 배열로 반환하라.
+
+판단 기준:
+- 산업적 파급력
+- 기술 혁신성
+- 시장/주식 영향 가능성
+- 개발자 생태계 영향
+- 단순 가십/홍보성 기사 제외
+
+반드시 JSON 배열만 반환.
+"""
+
+    for i, a in enumerate(articles):
+        prompt += f"\n[{i}] 제목: {a['title']} 요약: {a['summary_text']}"
+
+    response = client.responses.create(
+        model=MODEL_NAME,
+        input=prompt,
+        max_output_tokens=120,
+        temperature=0.2
     )
-    return response.choices[0].message.content.strip()
+
+    try:
+        indices = json.loads(response.output_text.strip())
+        return indices[:top_n]
+    except:
+        return [0, 1, 2]
 
 
-# ==============================
-# Message Builder
-# ==============================
-def build_message(topic: str, articles: list) -> str:
-    today = datetime.now().strftime("%Y-%m-%d")
-    result = f"📌 {today} {topic} 뉴스 요약\n\n"
+# =========================================
+# 2차: 고급 분석 + 주가 영향 평가
+# =========================================
+def summarize_and_predict(article):
 
-    for article in articles:
-        summary = summarize(article["title"] + "\n" + (article.get("description") or ""))
-        result += f"🔹 {article['title']}\n"
-        result += f"{summary}\n"
-        result += f"{article['url']}\n\n"
+    prompt = f"""
+당신은 금융 이벤트 기반 분석 시스템이다.
+추측, 상상, 기사에 없는 정보 생성은 금지한다.
+기사 내용에 명시된 정보만 기반으로 분석하라.
 
-    return result
+기사 제목:
+{article['title']}
+
+기사 요약:
+{article['summary_text']}
+
+절차:
+
+1) 이벤트 유형 분류
+(투자/인수합병/신제품/규제/실적/정책/기술혁신/보안문제/기타)
+
+2) 관련 기업 또는 산업 식별
+- 기사에 명시된 기업만 사용
+- 없으면 산업 단위 분석
+
+3) 주가 영향 방향 판단
+- 상승 가능성
+- 하락 가능성
+- 중립
+
+4) 확률 범위 제시
+- 0~30% 낮음
+- 30~60% 보통
+- 60~80% 높음
+- 80% 이상 매우 높음
+
+5) 시간 구간
+- 단기 (1~7일)
+- 중기 (1~3개월)
+
+6) 불확실성 요인 명시
+
+출력 형식:
+
+[핵심 요약]
+- ...
+
+[이벤트 유형]
+- ...
+
+[영향 기업/산업]
+- ...
+
+[주가 영향 평가]
+- 방향:
+- 확률 범위:
+- 시간 구간:
+- 근거:
+- 불확실성 요인:
+"""
+
+    response = client.responses.create(
+        model=MODEL_NAME,
+        input=prompt,
+        max_output_tokens=700,
+        temperature=0.2
+    )
+
+    return response.output_text
 
 
-# ==============================
-# Sender
-# ==============================
-def send_to_discord(webhook_url: str, content: str):
-    requests.post(webhook_url, json={"content": content})
+# =========================================
+# 디스코드 전송
+# =========================================
+def send_to_discord(content):
+    requests.post(DISCORD_WEBHOOK, json={"content": content})
 
 
-# ==============================
-# Main
-# ==============================
+# =========================================
+# 메인 실행
+# =========================================
 def main():
-    service = NewsService(NEWS_API_KEY)
-    articles = service.fetch(TOPIC)
-    message = build_message(TOPIC, articles)
-    send_to_discord(DISCORD_WEBHOOK, message)
+
+    kr_news = fetch_news(country="kr", limit=10)
+    global_news = fetch_news(language="en", limit=10)
+
+    articles = preprocess_articles(kr_news + global_news)
+
+    if len(articles) < 3:
+        send_to_discord("뉴스 수집 실패 또는 기사 부족")
+        return
+
+    selected_indices = select_top_articles(articles)
+
+    message = "📌 오늘의 IT/AI 핵심 뉴스 TOP 3 (고급 분석)\n\n"
+
+    for idx in selected_indices:
+        article = articles[idx]
+        result = summarize_and_predict(article)
+
+        message += f"🔹 {article['title']}\n"
+        message += result
+        message += "\n\n"
+
+    send_to_discord(message)
 
 
 if __name__ == "__main__":
