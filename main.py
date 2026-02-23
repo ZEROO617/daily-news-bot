@@ -14,9 +14,6 @@ MODEL_NAME = "gpt-4o-mini"
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-KEYWORDS = "IT OR AI OR startup OR programming OR computer"
-
-
 # =========================================
 # 뉴스 수집
 # =========================================
@@ -37,7 +34,7 @@ def fetch_news(query=None, country=None, language=None, limit=10):
 
     response = requests.get(url, params=params)
 
-    # 🔥 상태 코드 체크
+    # HTTP 에러 확인
     if response.status_code != 200:
         print("HTTP ERROR:", response.status_code)
         print(response.text)
@@ -45,17 +42,18 @@ def fetch_news(query=None, country=None, language=None, limit=10):
 
     data = response.json()
 
-    # 🔥 API 내부 에러 체크
+    # NewsAPI 내부 에러 확인
     if data.get("status") != "ok":
         print("NEWS API ERROR:", data)
         return []
 
-    print("Fetched:", len(data.get("articles", [])))
-    return data.get("articles", [])
+    articles = data.get("articles", [])
+    print("Fetched:", len(articles))
+    return articles
 
 
 # =========================================
-# 전처리 (토큰 최소화 + 품질 유지)
+# 전처리 (완화 버전)
 # =========================================
 def preprocess_articles(articles):
     unique = {}
@@ -68,11 +66,14 @@ def preprocess_articles(articles):
         if not title:
             continue
 
-        summary_text = description if len(description) > 30 else content
+        # description 우선 사용, 없으면 content
+        summary_text = description if description else content
 
-        if len(summary_text) < 30:
+        # 최소 길이 완화
+        if not summary_text or len(summary_text) < 10:
             continue
 
+        # 중복 제거
         if title in unique:
             continue
 
@@ -86,21 +87,13 @@ def preprocess_articles(articles):
 
 
 # =========================================
-# 1차: 중요 기사 선택 (구조적 기준 적용)
+# 중요 기사 선택
 # =========================================
 def select_top_articles(articles, top_n=3):
 
     prompt = """
 다음 뉴스 중 IT/AI/산업/개발자 관점에서 가장 의미 있는 기사 3개의 번호만 JSON 배열로 반환하라.
-
-판단 기준:
-- 산업적 파급력
-- 기술 혁신성
-- 시장/주식 영향 가능성
-- 개발자 생태계 영향
-- 단순 가십/홍보성 기사 제외
-
-반드시 JSON 배열만 반환.
+반드시 예: [1,3,5] 형식으로만 출력하라.
 """
 
     for i, a in enumerate(articles):
@@ -115,92 +108,36 @@ def select_top_articles(articles, top_n=3):
 
     try:
         indices = json.loads(response.output_text.strip())
+        print("Selected indices:", indices)
         return indices[:top_n]
-    except:
-        return [0, 1, 2]
+    except Exception as e:
+        print("Selection parse error:", e)
+        return list(range(min(3, len(articles))))
 
 
 # =========================================
-# 2차: 고급 분석 + 주가 영향 평가
+# 요약 + 분석
 # =========================================
 def summarize_and_predict(article):
 
     prompt = f"""
-당신은 금융 이벤트 기반 분석 시스템이다.
-기사에 명시되지 않은 정보는 생성하지 말 것.
-추측, 과장, 외부 정보 추가 금지.
-
 기사 제목:
 {article['title']}
 
 기사 내용:
 {article['summary_text']}
 
-분석 절차:
-
-1) 기사 핵심 요약 (3~5줄)
-   - 사실 중심
-   - 수치, 기업명, 정책명은 유지
-
-2) 핵심 이벤트 정의 (한 문장)
-
-3) 이벤트 유형 분류
-   (투자, 인수합병, 실적, 신제품, 규제, 정책, 기술혁신, 보안사고, 파트너십, 기타)
-
-4) 직접 영향 기업 또는 산업 식별
-   - 기사에 명시된 기업만 사용
-   - 없으면 산업 단위로 분석
-
-5) 산업 파급력 분석
-   - 경쟁구도 변화
-   - 시장 점유율 영향 가능성
-   - 기술적 진입장벽 변화
-
-6) 주가 영향 평가
-   - 방향: 상승 / 하락 / 중립
-   - 강도: 약 / 중 / 강
-   - 확률 범위 (% 숫자로 제시)
-   - 시간 범위: 단기(1~7일) / 중기(1~3개월)
-   - 근거: 기사 내용 기반으로 설명
-
-7) 불확실성 및 리스크 요인
-   - 정보 부족
-   - 정책 변수
-   - 거시경제 변수
-   - 실행 리스크
-
-출력 형식:
-
-[기사 요약]
-...
-
-[핵심 이벤트]
-...
-
-[이벤트 유형]
-...
-
-[영향 기업/산업]
-...
-
-[산업 파급력]
-...
-
-[주가 영향 평가]
-- 방향:
-- 강도:
-- 확률:
-- 시간 범위:
-- 근거:
-
-[리스크 요인]
-...
+1) 핵심 요약 (3~5줄)
+2) 이벤트 유형
+3) 영향 기업/산업
+4) 주가 영향 방향 및 확률
+5) 리스크 요인
 """
 
     response = client.responses.create(
         model=MODEL_NAME,
         input=prompt,
-        max_output_tokens=900,
+        max_output_tokens=700,
         temperature=0.2
     )
 
@@ -219,30 +156,40 @@ def send_to_discord(content):
 # =========================================
 def main():
 
-     # 1️⃣ 뉴스 수집
-    kr_news = fetch_news(country="kr", limit=10)
-    global_news = fetch_news(language="en", limit=10)
+    # 🔎 한국/해외 쿼리 분리
+    kr_query = "인공지능 OR AI OR 스타트업 OR IT OR 프로그래밍"
+    global_query = "AI OR startup OR programming OR technology"
 
-    # 🔍 1차 검증: API 응답 자체 확인
+    kr_news = fetch_news(query=kr_query, country="kr", limit=10)
+    global_news = fetch_news(query=global_query, language="en", limit=10)
+
+    print("KR raw:", len(kr_news))
+    print("GLOBAL raw:", len(global_news))
+
+    # 1차 검증
     if len(kr_news) == 0 and len(global_news) == 0:
         send_to_discord("NewsAPI 응답 없음 - API 또는 쿼리 확인 필요")
         return
 
-    # 2️⃣ 전처리
+    # 전처리
     articles = preprocess_articles(kr_news + global_news)
 
-    # 🔍 2차 검증: 전처리 이후 기사 수 확인
+    print("After preprocess:", len(articles))
+
+    # 2차 검증
     if len(articles) < 3:
         send_to_discord(f"전처리 후 기사 부족: {len(articles)}개")
         return
 
-    # 3️⃣ 중요 기사 선택
+    # 중요 기사 선택
     selected_indices = select_top_articles(articles)
 
     message = "📌 오늘의 IT/AI 핵심 뉴스 TOP 3\n\n"
 
-    # 4️⃣ 분석
     for idx in selected_indices:
+        if idx >= len(articles):
+            continue
+
         article = articles[idx]
         result = summarize_and_predict(article)
 
@@ -250,7 +197,6 @@ def main():
         message += result
         message += "\n\n"
 
-    # 5️⃣ 디스코드 전송
     send_to_discord(message)
 
 
