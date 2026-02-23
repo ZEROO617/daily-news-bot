@@ -23,6 +23,6 @@ jobs:
 
       - name: Run bot
         env:
-          NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          NEWS_API_KEY: ${{ 828a95f6893b45ce9495de12fa474cfa }}
+          DISCORD_WEBHOOK: ${{ [https://discord.com/api/webhooks/1475445548780752926/JGFMnhUuhnlRsRf1Qel8rNZ0likSwrrQNE0mV1maBouBNuX277KUuuvvh6N-EMMZHmjy](https://discord.com/api/webhooks/1475445548780752926/JGFMnhUuhnlRsRf1Qel8rNZ0likSwrrQNE0mV1maBouBNuX277KUuuvvh6N-EMMZHmjy) }}
         run: python main.py
